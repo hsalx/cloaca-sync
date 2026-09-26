@@ -1,0 +1,302 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0A0E13">
+<title>CLOACA Sync</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #0A0E13; --card: #121922; --border: #1F2935; --text: #E8EEF4;
+    --muted: #8391A1; --dim: #4A5563;
+    --green: #34D399; --lime: #A3E635; --amber: #FBBF24; --orange: #FB923C; --red: #F87171;
+    --t: #FF8A65; --td: #22D3EE; --rh: #60A5FA;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: var(--bg); color: var(--text);
+    font-family: Montserrat, system-ui, sans-serif; -webkit-font-smoothing: antialiased; }
+  main { max-width: 520px; margin: 0 auto; padding: 16px 16px 40px; }
+  header { display: flex; align-items: center; justify-content: space-between; margin: 4px 4px 16px; }
+  h1 { font-size: 22px; font-weight: 600; margin: 0; letter-spacing: .5px; }
+  h1 span { color: var(--muted); font-weight: 500; }
+  .pill { font-size: 12px; letter-spacing: 1.5px; padding: 6px 10px; border-radius: 999px;
+    border: 1px solid var(--border); color: var(--muted); display: flex; align-items: center; gap: 8px; }
+  .pill i { width: 8px; height: 8px; border-radius: 50%; background: var(--dim); display: inline-block; }
+  .card { background: var(--card); border: 1px solid var(--border); border-radius: 18px;
+    padding: 14px 16px; margin-bottom: 12px; }
+  .cap { font-size: 11px; letter-spacing: 2px; color: var(--muted); text-transform: uppercase; margin-bottom: 8px; }
+  .row { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+  .loc { font-size: 15px; }
+  .sub { font-size: 13px; color: var(--muted); }
+  .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+  .stat .v { font-size: 22px; font-weight: 600; font-variant-numeric: tabular-nums; }
+  .stat .l { font-size: 10px; letter-spacing: 1.5px; color: var(--muted); text-transform: uppercase; margin-top: 2px; }
+  svg { width: 100%; height: 130px; display: block; }
+  .legend { display: flex; gap: 14px; font-size: 11px; color: var(--muted); margin-top: 6px; }
+  .legend b { display: inline-block; width: 10px; height: 3px; border-radius: 2px; margin-right: 6px; vertical-align: middle; }
+  button { width: 100%; border: 0; border-radius: 18px; padding: 20px; margin: 4px 0 12px;
+    font: 700 18px Montserrat, system-ui, sans-serif; letter-spacing: 2px;
+    background: var(--green); color: #06251A; cursor: pointer; }
+  button:disabled { background: var(--border); color: var(--dim); }
+  #log { font-size: 13px; color: var(--muted); line-height: 1.7; min-height: 22px; }
+  #log .ok { color: var(--green); } #log .err { color: var(--red); }
+  .big { font-size: 40px; font-weight: 700; font-variant-numeric: tabular-nums; line-height: 1; }
+  .hidden { display: none; }
+  .warn { color: var(--amber); }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>CLOACA <span>/ SYNC</span></h1>
+    <div class="pill"><i id="dot"></i><span id="state">STARTING</span></div>
+  </header>
+
+  <section class="card">
+    <div class="cap">Location</div>
+    <div class="row"><div class="loc" id="loc">Locating&hellip;</div><div class="sub" id="elev"></div></div>
+    <div class="sub" id="fetched"></div>
+  </section>
+
+  <section class="card">
+    <div class="cap">Next 24 h</div>
+    <div class="grid">
+      <div class="stat"><div class="v" id="s-low">--</div><div class="l">Low</div></div>
+      <div class="stat"><div class="v" id="s-spread">--</div><div class="l">Min dew gap</div></div>
+      <div class="stat"><div class="v" id="s-rain">--</div><div class="l">Rain chance</div></div>
+      <div class="stat"><div class="v" id="s-wind">--</div><div class="l">Max gust</div></div>
+      <div class="stat"><div class="v" id="s-cloud">--</div><div class="l">Cloud, night</div></div>
+      <div class="stat"><div class="v" id="s-dp">--</div><div class="l">hPa, 12 h</div></div>
+    </div>
+  </section>
+
+  <section class="card">
+    <div class="cap">Temperature &amp; dew point, 72 h</div>
+    <svg id="chart" viewBox="0 0 400 130" preserveAspectRatio="none" aria-label="Temperature and dew point forecast"></svg>
+    <div class="legend"><span><b style="background:var(--t)"></b>Temp</span><span><b style="background:var(--td)"></b>Dew point</span><span><b style="background:var(--rh);opacity:.5"></b>Rain %</span><span id="range" style="margin-left:auto"></span></div>
+  </section>
+
+  <button id="sync" disabled>SYNC TO CLOACA</button>
+  <div id="log"></div>
+
+  <section class="card hidden" id="cabin">
+    <div class="cap">Cabin, from CLOACA</div>
+    <div class="row">
+      <div><div class="big" id="c-co2">--</div><div class="sub">ppm CO2</div></div>
+      <div style="text-align:right"><div class="loc" id="c-air">--</div><div class="sub" id="c-clim">--</div></div>
+    </div>
+  </section>
+</main>
+
+<script>
+// CLOACA BLE service (see firmware main/ble_link.h)
+const SVC    = 'c10aca00-5e9c-4a1a-9d0e-7c10aca0f00d';
+const FC_CHR = 'c10aca01-5e9c-4a1a-9d0e-7c10aca0f00d';
+const ST_CHR = 'c10aca02-5e9c-4a1a-9d0e-7c10aca0f00d';
+const ENV_CHR= 'c10aca03-5e9c-4a1a-9d0e-7c10aca0f00d';
+const HOURS = 72, CHUNK = 180;
+
+const $ = id => document.getElementById(id);
+let fc = null;   // { payload, meta, hourly }
+
+function state(text, color) {
+  $('state').textContent = text;
+  $('dot').style.background = color || 'var(--dim)';
+}
+function log(msg, cls) {
+  const d = document.createElement('div');
+  d.textContent = msg;
+  if (cls) d.className = cls;
+  $('log').appendChild(d);
+}
+
+function locate() {
+  return new Promise((resolve, reject) => {
+    if (!navigator.geolocation) return reject(new Error('No geolocation'));
+    navigator.geolocation.getCurrentPosition(
+      p => resolve(p.coords),
+      e => reject(new Error('Location: ' + e.message)),
+      { enableHighAccuracy: true, timeout: 20000, maximumAge: 10 * 60 * 1000 });
+  });
+}
+
+async function fetchForecast(lat, lon) {
+  const vars = ['temperature_2m', 'relative_humidity_2m', 'dew_point_2m', 'pressure_msl',
+    'surface_pressure', 'cloud_cover', 'wind_speed_10m', 'wind_gusts_10m', 'precipitation',
+    'precipitation_probability', 'weather_code'];
+  const url = 'https://api.open-meteo.com/v1/forecast?latitude=' + lat.toFixed(4) +
+    '&longitude=' + lon.toFixed(4) + '&hourly=' + vars.join(',') +
+    '&wind_speed_unit=ms&timeformat=unixtime&timezone=auto&forecast_days=4';
+  const r = await fetch(url);
+  if (!r.ok) throw new Error('Open-Meteo HTTP ' + r.status);
+  return r.json();
+}
+
+function num(v, digits) {
+  return (v === null || v === undefined || Number.isNaN(v)) ? 'nan' : Number(v).toFixed(digits);  // never empty: firmware tokenizer skips empty fields
+}
+
+// Build the wire payload (format documented in firmware main/forecast.h)
+function buildPayload(j) {
+  const h = j.hourly, now = Math.floor(Date.now() / 1000);
+  const start = Math.max(0, h.time.findIndex(t => t + 3600 > now));
+  const idx = [];
+  for (let i = start; i < h.time.length && idx.length < HOURS; i++) idx.push(i);
+  const lines = [`FC,1,${now},${j.utc_offset_seconds},${j.latitude.toFixed(4)},${j.longitude.toFixed(4)},${num(j.elevation, 0)}`];
+  for (const i of idx) {
+    lines.push(['H', h.time[i], num(h.temperature_2m[i], 1), num(h.relative_humidity_2m[i], 0),
+      num(h.dew_point_2m[i], 1), num(h.pressure_msl[i], 1), num(h.surface_pressure[i], 1),
+      num(h.cloud_cover[i], 0), num(h.wind_speed_10m[i], 1), num(h.wind_gusts_10m[i], 1),
+      num(h.precipitation[i], 1), h.precipitation_probability[i] ?? -1, h.weather_code[i] ?? -1].join(','));
+  }
+  lines.push(`END,${idx.length}`);
+  return { text: lines.join('\n') + '\n', idx };
+}
+
+function summarize(j, idx) {
+  const h = j.hourly, n24 = idx.slice(0, 24);
+  const pick = k => n24.map(i => h[k][i]).filter(v => v !== null);
+  const t = pick('temperature_2m'), rain = pick('precipitation_probability'), gust = pick('wind_gusts_10m');
+  const spread = n24.map(i => h.temperature_2m[i] - h.dew_point_2m[i]);
+  // "night" = local 21:00-06:00
+  const night = n24.filter(i => { const hr = new Date((h.time[i] + j.utc_offset_seconds) * 1000).getUTCHours();
+                                  return hr >= 21 || hr < 6; }).map(i => h.cloud_cover[i]);
+  const p0 = h.surface_pressure[idx[0]], p12 = h.surface_pressure[idx[Math.min(12, idx.length - 1)]];
+  $('s-low').textContent = t.length ? Math.min(...t).toFixed(0) + '°' : '--';
+  const ms = Math.min(...spread);
+  $('s-spread').textContent = ms.toFixed(1) + '°';
+  $('s-spread').style.color = ms < 2 ? 'var(--red)' : ms < 4 ? 'var(--amber)' : 'var(--green)';
+  $('s-rain').textContent = rain.length ? Math.max(...rain) + '%' : '--';
+  $('s-wind').textContent = gust.length ? Math.max(...gust).toFixed(0) + ' m/s' : '--';
+  $('s-cloud').textContent = night.length ? Math.round(night.reduce((a, b) => a + b, 0) / night.length) + '%' : '--';
+  const dp = p12 - p0;
+  $('s-dp').textContent = (dp >= 0 ? '+' : '') + dp.toFixed(1);
+  $('s-dp').style.color = dp < -3 ? 'var(--amber)' : 'var(--text)';
+}
+
+function chart(j, idx) {
+  const h = j.hourly, W = 400, H = 130, pad = 6;
+  const t = idx.map(i => h.temperature_2m[i]), d = idx.map(i => h.dew_point_2m[i]);
+  const all = t.concat(d).filter(v => v !== null);
+  const lo = Math.floor(Math.min(...all)) - 1, hi = Math.ceil(Math.max(...all)) + 1;
+  const x = k => pad + k * (W - 2 * pad) / Math.max(1, idx.length - 1);
+  const y = v => H - pad - (v - lo) * (H - 2 * pad) / (hi - lo);
+  const path = arr => arr.map((v, k) => (k ? 'L' : 'M') + x(k).toFixed(1) + ' ' + y(v).toFixed(1)).join(' ');
+  let s = '';
+  // rain probability bars
+  idx.forEach((i, k) => { const p = h.precipitation_probability[i] || 0;
+    if (p > 0) s += `<rect x="${x(k) - 1.5}" y="${H - pad - p * 0.4}" width="3" height="${p * 0.4}" fill="#60A5FA" opacity=".35"/>`; });
+  // midnight markers
+  idx.forEach((i, k) => { if (new Date((h.time[i] + j.utc_offset_seconds) * 1000).getUTCHours() === 0)
+    s += `<line x1="${x(k)}" x2="${x(k)}" y1="0" y2="${H}" stroke="#1F2935" stroke-width="1"/>`; });
+  s += `<path d="${path(d)}" fill="none" stroke="#22D3EE" stroke-width="2.5" vector-effect="non-scaling-stroke"/>`;
+  s += `<path d="${path(t)}" fill="none" stroke="#FF8A65" stroke-width="2.5" vector-effect="non-scaling-stroke"/>`;
+  $('chart').innerHTML = s;
+  $('range').textContent = `${lo}° to ${hi}°C`;
+}
+
+function render(j, fetchedAt, cached) {
+  const { text, idx } = buildPayload(j);
+  fc = { text, j };
+  $('loc').textContent = `${j.latitude.toFixed(3)}, ${j.longitude.toFixed(3)}`;
+  $('elev').textContent = `${Math.round(j.elevation)} m`;
+  const tm = new Date(fetchedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  $('fetched').innerHTML = cached ? `<span class="warn">Offline &mdash; using forecast from ${new Date(fetchedAt).toLocaleString()}</span>`
+                                  : `Open-Meteo, ${idx.length} h, fetched ${tm}`;
+  summarize(j, idx);
+  chart(j, idx);
+  $('sync').disabled = false;
+}
+
+async function load() {
+  if (!navigator.bluetooth) log('This browser has no Web Bluetooth. Use Chrome on Android.', 'err');
+  try {
+    state('LOCATING');
+    const c = await locate();
+    state('FETCHING');
+    const j = await fetchForecast(c.latitude, c.longitude);
+    try { localStorage.setItem('cloaca_fc', JSON.stringify({ at: Date.now(), j })); } catch (e) {}
+    render(j, Date.now(), false);
+    state('READY', 'var(--green)');
+  } catch (e) {
+    let saved = null;
+    try { saved = JSON.parse(localStorage.getItem('cloaca_fc')); } catch (_) {}
+    if (saved) {
+      render(saved.j, saved.at, true);
+      state('OFFLINE', 'var(--amber)');
+    } else {
+      state('ERROR', 'var(--red)');
+    }
+    log(e.message, 'err');
+  }
+}
+
+function waitStatus(chr, timeoutMs) {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => { chr.removeEventListener('characteristicvaluechanged', on); reject(new Error('No reply from CLOACA')); }, timeoutMs);
+    function on(ev) {
+      const s = new TextDecoder().decode(ev.target.value);
+      if (s.startsWith('OK') || s.startsWith('ERR')) {
+        clearTimeout(timer);
+        chr.removeEventListener('characteristicvaluechanged', on);
+        resolve(s);
+      }
+    }
+    chr.addEventListener('characteristicvaluechanged', on);
+  });
+}
+
+async function sync() {
+  if (!fc) return;
+  $('sync').disabled = true;
+  $('log').innerHTML = '';
+  let dev;
+  try {
+    state('CONNECTING', 'var(--amber)');
+    dev = await navigator.bluetooth.requestDevice({ filters: [{ services: [SVC] }] });
+    log('Connecting to ' + (dev.name || 'CLOACA') + '…');
+    const gatt = await dev.gatt.connect();
+    const svc = await gatt.getPrimaryService(SVC);
+    const fcChr = await svc.getCharacteristic(FC_CHR);
+    const stChr = await svc.getCharacteristic(ST_CHR);
+    await stChr.startNotifications();
+    const reply = waitStatus(stChr, 15000);
+
+    const bytes = new TextEncoder().encode(fc.text);
+    state('SENDING', 'var(--amber)');
+    log(`Sending ${(bytes.length / 1024).toFixed(1)} KB…`);
+    for (let o = 0; o < bytes.length; o += CHUNK)
+      await fcChr.writeValueWithResponse(bytes.slice(o, o + CHUNK));
+
+    const st = await reply;
+    if (!st.startsWith('OK')) throw new Error('CLOACA rejected forecast: ' + st);
+    log(`CLOACA stored ${st.split(',')[1]} hours and set its clock.`, 'ok');
+
+    try {
+      const env = new TextDecoder().decode(await (await svc.getCharacteristic(ENV_CHR)).readValue());
+      const kv = Object.fromEntries(env.split(',').map(p => p.split('=')));
+      if (kv.co2) {
+        $('c-co2').textContent = kv.co2;
+        $('c-air').textContent = kv.air || '';
+        $('c-clim').textContent = `${Number(kv.t).toFixed(1)}°C • ${Number(kv.rh).toFixed(0)}% • dew ${Number(kv.td).toFixed(1)}°`;
+        $('cabin').classList.remove('hidden');
+      }
+    } catch (e) { /* cabin readout is optional */ }
+    state('SYNCED', 'var(--green)');
+  } catch (e) {
+    log(e.message, 'err');
+    state('FAILED', 'var(--red)');
+  } finally {
+    if (dev && dev.gatt.connected) dev.gatt.disconnect();
+    $('sync').disabled = false;
+  }
+}
+
+$('sync').addEventListener('click', sync);
+load();
+</script>
+</body>
+</html>
