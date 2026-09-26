@@ -72,6 +72,7 @@
     <div class="cap">Location</div>
     <div class="row"><div class="loc" id="loc">Locating&hellip;</div><div class="sub" id="elev"></div></div>
     <div class="sub" id="fetched"></div>
+    <div class="sub" id="nwr"></div>
     <form class="search" id="search" autocomplete="off">
       <input id="q" type="search" placeholder="Town, or paste coordinates / map link" enterkeyhint="search"
              aria-label="Search for a place">
@@ -165,24 +166,62 @@ async function fetchForecast(lat, lon) {
             '&daily=' + DAILY.join(',') + '&wind_speed_unit=ms&forecast_days=8', 'Open-Meteo'),
     getJSON('https://air-quality-api.open-meteo.com/v1/air-quality?' + ll +
             '&hourly=pm2_5,pm10,us_aqi&forecast_days=4', 'Air quality').catch(e => { log(e.message + ' (skipping smoke data)', 'err'); return null; }),
-    placeName(lat, lon).catch(() => ''),
+    placeInfo(lat, lon).catch(() => ({ name: '', st: '', county: '' })),
   ]);
-  j.place = place;
+  j.place = place.name;
+  j.county = place.county;
+  try { j.nwr = pickNwr(await nwrList(), lat, lon, place.st, place.county); }
+  catch (e) { j.nwr = null; log(e.message + ' (skipping weather radio)', 'err'); }
   j.aq = {};
   if (aq && aq.hourly)
     aq.hourly.time.forEach((t, i) => { j.aq[t] = [aq.hourly.pm2_5[i], aq.hourly.pm10[i], aq.hourly.us_aqi[i]]; });
   return j;
 }
 
-// "Leavenworth, WA" from BigDataCloud's free client-side reverse geocoder.
-// CLOACA's fonts are ASCII-only, so accents are stripped.
-async function placeName(lat, lon) {
+// Reverse geocode (BigDataCloud's free client-side API): display name like
+// "Leavenworth, WA" (ASCII: CLOACA's fonts have no accents) plus the county,
+// which picks the NOAA Weather Radio transmitter.
+async function placeInfo(lat, lon) {
   const g = await getJSON('https://api.bigdatacloud.net/data/reverse-geocode-client?latitude=' +
     lat.toFixed(4) + '&longitude=' + lon.toFixed(4) + '&localityLanguage=en', 'Place name');
   const town = g.city || g.locality || '';
-  const region = (g.principalSubdivisionCode || '').split('-')[1] || g.countryCode || '';
-  const name = [town, region].filter(Boolean).join(', ');
-  return name.normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^\x20-\x7E]/g, '').slice(0, 38);
+  const st = (g.principalSubdivisionCode || '').split('-')[1] || '';
+  const region = st || g.countryCode || '';
+  const ascii = t => t.normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^\x20-\x7E]/g, '');
+  const name = ascii([town, region].filter(Boolean).join(', ')).slice(0, 38);
+  const admin = (g.localityInfo && g.localityInfo.administrative) || [];
+  const cty = admin.map(x => x.name || '').find(n => /( County| Parish| Borough| Census Area| Municipality)$/.test(n));
+  const county = cty ? cty.replace(/ (County|Parish|Borough|Census Area|Municipality)$/, '') : '';
+  return { name, st: g.countryCode === 'US' ? st : '', county };
+}
+
+// ---- NOAA Weather Radio (web/nwr.json, built by tools/gen_nwr.py from NOAA's coverage list)
+let NWR = null;
+async function nwrList() {
+  if (!NWR) NWR = (await getJSON('nwr.json', 'NWR list')).tx;
+  return NWR;
+}
+function miles(la1, lo1, la2, lo2) {
+  const r = Math.PI / 180, a = Math.sin((la2 - la1) * r / 2) ** 2 +
+    Math.cos(la1 * r) * Math.cos(la2 * r) * Math.sin((lo2 - lo1) * r / 2) ** 2;
+  return 7917.5 * Math.asin(Math.sqrt(a));
+}
+// Transmitters NOAA lists for the county, nearest first; otherwise the best
+// power-weighted nearest (1 kW reaches ~40 mi, falling off roughly as P^0.25)
+function pickNwr(tx, lat, lon, st, county) {
+  const key = st && county ? `${st}:${county}` : '';
+  let pool = key ? tx.filter(t => t[7].split('|').includes(key)) : [];
+  const byCounty = pool.length > 0;
+  if (!byCounty) pool = tx;
+  let best = null, bestScore = Infinity;
+  for (const t of pool) {
+    const d = miles(lat, lon, t[0], t[1]);
+    const score = byCounty ? d : d / (40 * Math.pow(Math.max(t[4], 10) / 1000, 0.25));
+    if (score < bestScore) { bestScore = score; best = { freq: t[2], call: t[3], site: t[5], st: t[6], mi: d }; }
+  }
+  if (best && !byCounty && best.mi > 120) return null;   // no station within reach
+  if (best) best.byCounty = byCounty;
+  return best;
 }
 
 const f = c => (c === null || c === undefined) ? null : c * 1.8 + 32;   // display in °F
@@ -221,6 +260,7 @@ function buildPayload(j) {
     nd++;
   }
   if (j.place) lines.push(`N,${j.place}`);
+  if (j.nwr) lines.push(`R,${j.nwr.freq},${j.nwr.call}`);
   lines.push(`END,${idx.length},${nd}`);
   return { text: lines.join('\n') + '\n', idx };
 }
@@ -275,6 +315,9 @@ function render(j, fetchedAt, cached) {
   const tm = new Date(fetchedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   $('fetched').innerHTML = cached ? `<span class="warn">Offline &mdash; using forecast from ${new Date(fetchedAt).toLocaleString()}</span>`
                                   : `Open-Meteo, ${idx.length} h, fetched ${tm}`;
+  $('nwr').textContent = j.nwr
+    ? `NOAA Weather Radio ${j.nwr.freq} MHz • ${j.nwr.call} ${j.nwr.site}, ${j.nwr.st} (${Math.round(j.nwr.mi)} mi${j.nwr.byCounty ? ', covers ' + j.county + ' Co.' : ''})`
+    : '';
   summarize(j, idx);
   chart(j, idx);
   $('sync').disabled = false;
