@@ -45,6 +45,19 @@
   #log .ok { color: var(--green); } #log .err { color: var(--red); }
   .big { font-size: 40px; font-weight: 700; font-variant-numeric: tabular-nums; line-height: 1; }
   .hidden { display: none; }
+  .search { display: flex; gap: 8px; margin-top: 12px; }
+  .search input { flex: 1; min-width: 0; background: var(--bg); color: var(--text); border: 1px solid var(--border);
+    border-radius: 12px; padding: 12px 14px; font: 500 15px Montserrat, system-ui, sans-serif; }
+  .search input:focus { outline: none; border-color: var(--muted); }
+  button.ghost { width: auto; margin: 0; padding: 12px 14px; border-radius: 12px; font-size: 13px; letter-spacing: 1px;
+    background: transparent; color: var(--text); border: 1px solid var(--border); }
+  .results { margin-top: 8px; }
+  .result { padding: 12px 4px; border-bottom: 1px solid var(--border); cursor: pointer; font-size: 15px; }
+  .result:last-child { border-bottom: 0; }
+  .result span { color: var(--muted); font-size: 13px; }
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+  .chip { font-size: 12px; color: var(--muted); border: 1px solid var(--border); border-radius: 999px;
+    padding: 6px 10px; cursor: pointer; }
   .warn { color: var(--amber); }
 </style>
 </head>
@@ -59,6 +72,13 @@
     <div class="cap">Location</div>
     <div class="row"><div class="loc" id="loc">Locating&hellip;</div><div class="sub" id="elev"></div></div>
     <div class="sub" id="fetched"></div>
+    <form class="search" id="search" autocomplete="off">
+      <input id="q" type="search" placeholder="Town, or paste coordinates / map link" enterkeyhint="search"
+             aria-label="Search for a place">
+      <button type="button" class="ghost" id="gps" title="Use this phone's location">GPS</button>
+    </form>
+    <div class="results" id="results"></div>
+    <div class="chips" id="recent"></div>
   </section>
 
   <section class="card">
@@ -165,6 +185,8 @@ async function placeName(lat, lon) {
   return name.normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^\x20-\x7E]/g, '').slice(0, 38);
 }
 
+const f = c => (c === null || c === undefined) ? null : c * 1.8 + 32;   // display in °F
+
 function num(v, digits) {
   return (v === null || v === undefined || Number.isNaN(v)) ? 'nan' : Number(v).toFixed(digits);  // never empty
 }
@@ -212,12 +234,12 @@ function summarize(j, idx) {
   const night = n24.filter(i => { const hr = new Date((h.time[i] + j.utc_offset_seconds) * 1000).getUTCHours();
                                   return hr >= 21 || hr < 6; }).map(i => h.cloud_cover[i]);
   const p0 = h.surface_pressure[idx[0]], p12 = h.surface_pressure[idx[Math.min(12, idx.length - 1)]];
-  $('s-low').textContent = t.length ? Math.min(...t).toFixed(0) + '°' : '--';
+  $('s-low').textContent = t.length ? f(Math.min(...t)).toFixed(0) + '°' : '--';
   const ms = Math.min(...spread);
-  $('s-spread').textContent = ms.toFixed(1) + '°';
+  $('s-spread').textContent = (ms * 1.8).toFixed(0) + '°';
   $('s-spread').style.color = ms < 2 ? 'var(--red)' : ms < 4 ? 'var(--amber)' : 'var(--green)';
   $('s-rain').textContent = rain.length ? Math.max(...rain) + '%' : '--';
-  $('s-wind').textContent = gust.length ? Math.max(...gust).toFixed(0) + ' m/s' : '--';
+  $('s-wind').textContent = gust.length ? (Math.max(...gust) * 2.23694).toFixed(0) + ' mph' : '--';
   $('s-cloud').textContent = night.length ? Math.round(night.reduce((a, b) => a + b, 0) / night.length) + '%' : '--';
   const dp = p12 - p0;
   $('s-dp').textContent = (dp >= 0 ? '+' : '') + dp.toFixed(1);
@@ -226,7 +248,7 @@ function summarize(j, idx) {
 
 function chart(j, idx) {
   const h = j.hourly, W = 400, H = 130, pad = 6;
-  const t = idx.map(i => h.temperature_2m[i]), d = idx.map(i => h.dew_point_2m[i]);
+  const t = idx.map(i => f(h.temperature_2m[i])), d = idx.map(i => f(h.dew_point_2m[i]));
   const all = t.concat(d).filter(v => v !== null);
   const lo = Math.floor(Math.min(...all)) - 1, hi = Math.ceil(Math.max(...all)) + 1;
   const x = k => pad + k * (W - 2 * pad) / Math.max(1, idx.length - 1);
@@ -242,14 +264,14 @@ function chart(j, idx) {
   s += `<path d="${path(d)}" fill="none" stroke="#22D3EE" stroke-width="2.5" vector-effect="non-scaling-stroke"/>`;
   s += `<path d="${path(t)}" fill="none" stroke="#FF8A65" stroke-width="2.5" vector-effect="non-scaling-stroke"/>`;
   $('chart').innerHTML = s;
-  $('range').textContent = `${lo}° to ${hi}°C`;
+  $('range').textContent = `${lo}° to ${hi}°F`;
 }
 
 function render(j, fetchedAt, cached) {
   const { text, idx } = buildPayload(j);
   fc = { text, j };
   $('loc').textContent = j.place || `${j.latitude.toFixed(3)}, ${j.longitude.toFixed(3)}`;
-  $('elev').textContent = `${Math.round(j.elevation)} m`;
+  $('elev').textContent = `${Math.round(j.elevation * 3.28084).toLocaleString()} ft`;
   const tm = new Date(fetchedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   $('fetched').innerHTML = cached ? `<span class="warn">Offline &mdash; using forecast from ${new Date(fetchedAt).toLocaleString()}</span>`
                                   : `Open-Meteo, ${idx.length} h, fetched ${tm}`;
@@ -258,27 +280,120 @@ function render(j, fetchedAt, cached) {
   $('sync').disabled = false;
 }
 
-async function load() {
-  if (!navigator.bluetooth) log('This browser has no Web Bluetooth. Use Chrome on Android.', 'err');
+// Fetch + show the forecast for a point. `label` is a fallback name if reverse geocoding finds nothing.
+async function loadAt(lat, lon, label) {
+  $('results').innerHTML = '';
   try {
-    state('LOCATING');
-    const c = await locate();
     state('FETCHING');
-    const j = await fetchForecast(c.latitude, c.longitude);
+    const j = await fetchForecast(lat, lon);
+    if (!j.place && label) j.place = label;
     try { localStorage.setItem('cloaca_fc', JSON.stringify({ at: Date.now(), j })); } catch (e) {}
     render(j, Date.now(), false);
+    remember(j.place || `${lat.toFixed(3)}, ${lon.toFixed(3)}`, lat, lon);
     state('READY', 'var(--green)');
   } catch (e) {
-    let saved = null;
-    try { saved = JSON.parse(localStorage.getItem('cloaca_fc')); } catch (_) {}
-    if (saved) {
-      render(saved.j, saved.at, true);
-      state('OFFLINE', 'var(--amber)');
-    } else {
-      state('ERROR', 'var(--red)');
-    }
+    showOffline();
     log(e.message, 'err');
   }
+}
+
+// Fall back to the last forecast this phone downloaded
+function showOffline() {
+  let saved = null;
+  try { saved = JSON.parse(localStorage.getItem('cloaca_fc')); } catch (_) {}
+  if (saved) {
+    render(saved.j, saved.at, true);
+    state('OFFLINE', 'var(--amber)');
+  } else {
+    state('ERROR', 'var(--red)');
+  }
+}
+
+async function loadHere() {
+  let c;
+  try {
+    state('LOCATING');
+    c = await locate();
+  } catch (e) {
+    showOffline();
+    log(e.message + ' - search for a place instead', 'err');
+    return;
+  }
+  await loadAt(c.latitude, c.longitude, null);
+}
+
+// "47.6062, -122.3321", "47.6062 -122.3321", or a map link with "@47.6,-122.3" / "q=47.6,-122.3"
+function parseCoords(text) {
+  const m = text.match(/(-?\d{1,2}(?:\.\d+)?)\s*[, ]\s*(-?\d{1,3}(?:\.\d+)?)/);
+  if (!m) return null;
+  const lat = parseFloat(m[1]), lon = parseFloat(m[2]);
+  return Math.abs(lat) <= 90 && Math.abs(lon) <= 180 && /[.,]/.test(m[0]) ? { lat, lon } : null;
+}
+
+async function search(q) {
+  q = q.trim();
+  if (!q) return;
+  const c = parseCoords(q);
+  if (c) return loadAt(c.lat, c.lon, null);
+  state('SEARCHING');
+  const box = $('results');
+  box.innerHTML = '';
+  try {
+    const g = await getJSON('https://geocoding-api.open-meteo.com/v1/search?count=6&language=en&format=json&name=' +
+                            encodeURIComponent(q), 'Search');
+    const list = g.results || [];
+    if (!list.length) { box.innerHTML = '<div class="sub">No matches. Try a nearby town or paste coordinates.</div>'; }
+    for (const r of list) {
+      const d = document.createElement('div');
+      d.className = 'result';
+      const where = [r.admin1, r.country_code].filter(Boolean).join(', ');
+      const ft = r.elevation != null ? ` \u2022 ${Math.round(r.elevation * 3.28084).toLocaleString()} ft` : '';
+      d.innerHTML = '';
+      d.append(r.name + ' ');
+      const sp = document.createElement('span');
+      sp.textContent = where + ft;
+      d.append(sp);
+      d.onclick = () => loadAt(r.latitude, r.longitude, r.name);
+      box.appendChild(d);
+    }
+    state(fc ? 'READY' : 'SEARCH', fc ? 'var(--green)' : 'var(--dim)');
+  } catch (e) {
+    log(e.message, 'err');
+    state('ERROR', 'var(--red)');
+  }
+}
+
+// Recent places (this phone only)
+function recents() {
+  try { return JSON.parse(localStorage.getItem('cloaca_recent')) || []; } catch (e) { return []; }
+}
+function remember(name, lat, lon) {
+  const list = recents().filter(r => Math.abs(r.lat - lat) > 0.01 || Math.abs(r.lon - lon) > 0.01);
+  list.unshift({ name, lat, lon });
+  try { localStorage.setItem('cloaca_recent', JSON.stringify(list.slice(0, 6))); } catch (e) {}
+  showRecents();
+}
+function showRecents() {
+  const box = $('recent');
+  box.innerHTML = '';
+  for (const r of recents()) {
+    const c = document.createElement('div');
+    c.className = 'chip';
+    c.textContent = r.name;
+    c.onclick = () => loadAt(r.lat, r.lon, r.name);
+    box.appendChild(c);
+  }
+}
+
+async function load() {
+  if (!navigator.bluetooth) log('This browser has no Web Bluetooth. Use Chrome on Android.', 'err');
+  showRecents();
+  // Links/NFC tags can pin a spot: ?lat=..&lon=..  or  ?q=Leavenworth
+  const u = new URLSearchParams(location.search);
+  const lat = parseFloat(u.get('lat')), lon = parseFloat(u.get('lon'));
+  if (!isNaN(lat) && !isNaN(lon)) return loadAt(lat, lon, u.get('name'));
+  if (u.get('q')) { $('q').value = u.get('q'); return search(u.get('q')); }
+  return loadHere();
 }
 
 function waitStatus(chr, timeoutMs) {
@@ -344,6 +459,8 @@ async function sync() {
 }
 
 $('sync').addEventListener('click', sync);
+$('search').addEventListener('submit', e => { e.preventDefault(); $('q').blur(); search($('q').value); });
+$('gps').addEventListener('click', () => { $('q').value = ''; loadHere(); });
 load();
 </script>
 </body>
