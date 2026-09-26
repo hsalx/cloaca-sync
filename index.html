@@ -140,16 +140,29 @@ async function getJSON(url, what) {
 // Forecast + air quality (smoke). Air quality is optional: on failure those fields are sent as nan.
 async function fetchForecast(lat, lon) {
   const ll = 'latitude=' + lat.toFixed(4) + '&longitude=' + lon.toFixed(4) + '&timeformat=unixtime&timezone=auto';
-  const [j, aq] = await Promise.all([
+  const [j, aq, place] = await Promise.all([
     getJSON('https://api.open-meteo.com/v1/forecast?' + ll + '&hourly=' + HOURLY.join(',') +
             '&daily=' + DAILY.join(',') + '&wind_speed_unit=ms&forecast_days=8', 'Open-Meteo'),
     getJSON('https://air-quality-api.open-meteo.com/v1/air-quality?' + ll +
             '&hourly=pm2_5,pm10,us_aqi&forecast_days=4', 'Air quality').catch(e => { log(e.message + ' (skipping smoke data)', 'err'); return null; }),
+    placeName(lat, lon).catch(() => ''),
   ]);
+  j.place = place;
   j.aq = {};
   if (aq && aq.hourly)
     aq.hourly.time.forEach((t, i) => { j.aq[t] = [aq.hourly.pm2_5[i], aq.hourly.pm10[i], aq.hourly.us_aqi[i]]; });
   return j;
+}
+
+// "Leavenworth, WA" from BigDataCloud's free client-side reverse geocoder.
+// CLOACA's fonts are ASCII-only, so accents are stripped.
+async function placeName(lat, lon) {
+  const g = await getJSON('https://api.bigdatacloud.net/data/reverse-geocode-client?latitude=' +
+    lat.toFixed(4) + '&longitude=' + lon.toFixed(4) + '&localityLanguage=en', 'Place name');
+  const town = g.city || g.locality || '';
+  const region = (g.principalSubdivisionCode || '').split('-')[1] || g.countryCode || '';
+  const name = [town, region].filter(Boolean).join(', ');
+  return name.normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^\x20-\x7E]/g, '').slice(0, 38);
 }
 
 function num(v, digits) {
@@ -185,6 +198,7 @@ function buildPayload(j) {
       d.sunrise[i] || 0, d.sunset[i] || 0].join(','));
     nd++;
   }
+  if (j.place) lines.push(`N,${j.place}`);
   lines.push(`END,${idx.length},${nd}`);
   return { text: lines.join('\n') + '\n', idx };
 }
@@ -234,7 +248,7 @@ function chart(j, idx) {
 function render(j, fetchedAt, cached) {
   const { text, idx } = buildPayload(j);
   fc = { text, j };
-  $('loc').textContent = `${j.latitude.toFixed(3)}, ${j.longitude.toFixed(3)}`;
+  $('loc').textContent = j.place || `${j.latitude.toFixed(3)}, ${j.longitude.toFixed(3)}`;
   $('elev').textContent = `${Math.round(j.elevation)} m`;
   const tm = new Date(fetchedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   $('fetched').innerHTML = cached ? `<span class="warn">Offline &mdash; using forecast from ${new Date(fetchedAt).toLocaleString()}</span>`
