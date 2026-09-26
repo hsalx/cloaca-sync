@@ -123,7 +123,7 @@ const HOURS = 72, CHUNK = 240;
 // Bump together with version.txt on every publish. Phones cache this page
 // (GitHub Pages: ~10 min, longer from a home-screen shortcut); load() compares
 // against version.txt fetched uncached and reloads onto a fresh URL if stale.
-const PAGE_VERSION = '2026-09-26.1';
+const PAGE_VERSION = '2026-09-26.2';
 
 const $ = id => document.getElementById(id);
 let fc = null;   // { payload, meta, hourly }
@@ -435,8 +435,9 @@ function showRecents() {
 
 async function staleReload() {
   try {
-    const v = (await (await fetch('version.txt', { cache: 'no-store' })).text()).trim();
-    if (!v || v === PAGE_VERSION) return false;
+    const r = await fetch('version.txt', { cache: 'no-store' });
+    const v = r.ok ? (await r.text()).trim() : '';
+    if (!/^[\w.-]{1,40}$/.test(v) || v === PAGE_VERSION) return false;
     const u = new URL(location.href);
     if (u.searchParams.get('v') === v) return false;   // already tried; don't loop
     u.searchParams.set('v', v);
