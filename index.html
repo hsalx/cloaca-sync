@@ -97,7 +97,7 @@ const SVC    = 'c10aca00-5e9c-4a1a-9d0e-7c10aca0f00d';
 const FC_CHR = 'c10aca01-5e9c-4a1a-9d0e-7c10aca0f00d';
 const ST_CHR = 'c10aca02-5e9c-4a1a-9d0e-7c10aca0f00d';
 const ENV_CHR= 'c10aca03-5e9c-4a1a-9d0e-7c10aca0f00d';
-const HOURS = 72, CHUNK = 180;
+const HOURS = 72, CHUNK = 240;
 
 const $ = id => document.getElementById(id);
 let fc = null;   // { payload, meta, hourly }
@@ -123,36 +123,69 @@ function locate() {
   });
 }
 
-async function fetchForecast(lat, lon) {
-  const vars = ['temperature_2m', 'relative_humidity_2m', 'dew_point_2m', 'pressure_msl',
-    'surface_pressure', 'cloud_cover', 'wind_speed_10m', 'wind_gusts_10m', 'precipitation',
-    'precipitation_probability', 'weather_code'];
-  const url = 'https://api.open-meteo.com/v1/forecast?latitude=' + lat.toFixed(4) +
-    '&longitude=' + lon.toFixed(4) + '&hourly=' + vars.join(',') +
-    '&wind_speed_unit=ms&timeformat=unixtime&timezone=auto&forecast_days=4';
+const HOURLY = ['temperature_2m', 'apparent_temperature', 'relative_humidity_2m', 'dew_point_2m',
+  'pressure_msl', 'surface_pressure', 'cloud_cover', 'cloud_cover_low', 'cloud_cover_mid',
+  'cloud_cover_high', 'visibility', 'wind_speed_10m', 'wind_gusts_10m', 'wind_direction_10m',
+  'precipitation', 'precipitation_probability', 'snowfall', 'uv_index', 'cape', 'weather_code', 'is_day'];
+const DAILY = ['weather_code', 'temperature_2m_max', 'temperature_2m_min', 'precipitation_sum',
+  'precipitation_probability_max', 'wind_gusts_10m_max', 'wind_direction_10m_dominant', 'uv_index_max',
+  'sunrise', 'sunset'];
+
+async function getJSON(url, what) {
   const r = await fetch(url);
-  if (!r.ok) throw new Error('Open-Meteo HTTP ' + r.status);
+  if (!r.ok) throw new Error(what + ' HTTP ' + r.status);
   return r.json();
 }
 
-function num(v, digits) {
-  return (v === null || v === undefined || Number.isNaN(v)) ? 'nan' : Number(v).toFixed(digits);  // never empty: firmware tokenizer skips empty fields
+// Forecast + air quality (smoke). Air quality is optional: on failure those fields are sent as nan.
+async function fetchForecast(lat, lon) {
+  const ll = 'latitude=' + lat.toFixed(4) + '&longitude=' + lon.toFixed(4) + '&timeformat=unixtime&timezone=auto';
+  const [j, aq] = await Promise.all([
+    getJSON('https://api.open-meteo.com/v1/forecast?' + ll + '&hourly=' + HOURLY.join(',') +
+            '&daily=' + DAILY.join(',') + '&wind_speed_unit=ms&forecast_days=8', 'Open-Meteo'),
+    getJSON('https://air-quality-api.open-meteo.com/v1/air-quality?' + ll +
+            '&hourly=pm2_5,pm10,us_aqi&forecast_days=4', 'Air quality').catch(e => { log(e.message + ' (skipping smoke data)', 'err'); return null; }),
+  ]);
+  j.aq = {};
+  if (aq && aq.hourly)
+    aq.hourly.time.forEach((t, i) => { j.aq[t] = [aq.hourly.pm2_5[i], aq.hourly.pm10[i], aq.hourly.us_aqi[i]]; });
+  return j;
 }
 
-// Build the wire payload (format documented in firmware main/forecast.h)
+function num(v, digits) {
+  return (v === null || v === undefined || Number.isNaN(v)) ? 'nan' : Number(v).toFixed(digits);  // never empty
+}
+
+// Build the wire payload (format v2, documented in firmware main/forecast.h)
 function buildPayload(j) {
-  const h = j.hourly, now = Math.floor(Date.now() / 1000);
+  const h = j.hourly, d = j.daily, now = Math.floor(Date.now() / 1000);
   const start = Math.max(0, h.time.findIndex(t => t + 3600 > now));
   const idx = [];
   for (let i = start; i < h.time.length && idx.length < HOURS; i++) idx.push(i);
-  const lines = [`FC,1,${now},${j.utc_offset_seconds},${j.latitude.toFixed(4)},${j.longitude.toFixed(4)},${num(j.elevation, 0)}`];
+  const lines = [`FC,2,${now},${j.utc_offset_seconds},${j.latitude.toFixed(4)},${j.longitude.toFixed(4)},${num(j.elevation, 0)}`];
   for (const i of idx) {
-    lines.push(['H', h.time[i], num(h.temperature_2m[i], 1), num(h.relative_humidity_2m[i], 0),
-      num(h.dew_point_2m[i], 1), num(h.pressure_msl[i], 1), num(h.surface_pressure[i], 1),
-      num(h.cloud_cover[i], 0), num(h.wind_speed_10m[i], 1), num(h.wind_gusts_10m[i], 1),
-      num(h.precipitation[i], 1), h.precipitation_probability[i] ?? -1, h.weather_code[i] ?? -1].join(','));
+    const a = (j.aq || {})[h.time[i]] || [];
+    lines.push(['H', h.time[i], num(h.temperature_2m[i], 1), num(h.apparent_temperature[i], 1),
+      num(h.relative_humidity_2m[i], 0), num(h.dew_point_2m[i], 1), num(h.pressure_msl[i], 1),
+      num(h.surface_pressure[i], 1), num(h.cloud_cover[i], 0), num(h.cloud_cover_low[i], 0),
+      num(h.cloud_cover_mid[i], 0), num(h.cloud_cover_high[i], 0), num(h.visibility[i], 0),
+      num(h.wind_speed_10m[i], 1), num(h.wind_gusts_10m[i], 1), num(h.wind_direction_10m[i], 0),
+      num(h.precipitation[i], 1), num(h.precipitation_probability[i], 0), num(h.snowfall[i], 1),
+      num(h.uv_index[i], 1), num(h.cape[i], 0), num(h.weather_code[i], 0), num(h.is_day[i], 0),
+      num(a[0], 1), num(a[1], 1), num(a[2], 0)].join(','));
   }
-  lines.push(`END,${idx.length}`);
+  // daily rows from the local "today" onward
+  const today = Math.floor((now + j.utc_offset_seconds) / 86400);
+  let nd = 0;
+  for (let i = 0; d && i < d.time.length && nd < 8; i++) {
+    if (Math.floor((d.time[i] + j.utc_offset_seconds) / 86400) < today) continue;
+    lines.push(['D', d.time[i], num(d.weather_code[i], 0), num(d.temperature_2m_max[i], 1),
+      num(d.temperature_2m_min[i], 1), num(d.precipitation_sum[i], 1), num(d.precipitation_probability_max[i], 0),
+      num(d.wind_gusts_10m_max[i], 1), num(d.wind_direction_10m_dominant[i], 0), num(d.uv_index_max[i], 1),
+      d.sunrise[i] || 0, d.sunset[i] || 0].join(','));
+    nd++;
+  }
+  lines.push(`END,${idx.length},${nd}`);
   return { text: lines.join('\n') + '\n', idx };
 }
 
@@ -273,7 +306,8 @@ async function sync() {
 
     const st = await reply;
     if (!st.startsWith('OK')) throw new Error('CLOACA rejected forecast: ' + st);
-    log(`CLOACA stored ${st.split(',')[1]} hours and set its clock.`, 'ok');
+    const [, nh, ndays] = st.split(',');
+    log(`CLOACA stored ${nh} hours + ${ndays || 0} days and set its clock.`, 'ok');
 
     try {
       const env = new TextDecoder().decode(await (await svc.getCharacteristic(ENV_CHR)).readValue());
