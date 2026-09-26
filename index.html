@@ -110,6 +110,7 @@
       <div style="text-align:right"><div class="loc" id="c-air">--</div><div class="sub" id="c-clim">--</div></div>
     </div>
   </section>
+  <div class="sub" id="ver" style="text-align:center;margin-top:18px;color:var(--dim)"></div>
 </main>
 
 <script>
@@ -119,6 +120,10 @@ const FC_CHR = 'c10aca01-5e9c-4a1a-9d0e-7c10aca0f00d';
 const ST_CHR = 'c10aca02-5e9c-4a1a-9d0e-7c10aca0f00d';
 const ENV_CHR= 'c10aca03-5e9c-4a1a-9d0e-7c10aca0f00d';
 const HOURS = 72, CHUNK = 240;
+// Bump together with version.txt on every publish. Phones cache this page
+// (GitHub Pages: ~10 min, longer from a home-screen shortcut); load() compares
+// against version.txt fetched uncached and reloads onto a fresh URL if stale.
+const PAGE_VERSION = '2026-09-26.1';
 
 const $ = id => document.getElementById(id);
 let fc = null;   // { payload, meta, hourly }
@@ -428,7 +433,23 @@ function showRecents() {
   }
 }
 
+async function staleReload() {
+  try {
+    const v = (await (await fetch('version.txt', { cache: 'no-store' })).text()).trim();
+    if (!v || v === PAGE_VERSION) return false;
+    const u = new URL(location.href);
+    if (u.searchParams.get('v') === v) return false;   // already tried; don't loop
+    u.searchParams.set('v', v);
+    location.replace(u.toString());
+    return true;
+  } catch (e) {
+    return false;   // offline: keep the cached page
+  }
+}
+
 async function load() {
+  $('ver').textContent = 'page ' + PAGE_VERSION;
+  if (await staleReload()) return;
   if (!navigator.bluetooth) log('This browser has no Web Bluetooth. Use Chrome on Android.', 'err');
   showRecents();
   // Links/NFC tags can pin a spot: ?lat=..&lon=..  or  ?q=Leavenworth
